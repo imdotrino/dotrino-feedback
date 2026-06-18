@@ -66,6 +66,9 @@ export default {
       // nickname + link de calificación + reviews existentes al email.
       pubkey: String(body.pubkey ?? '').trim().slice(0, 4000),
       nickname: sanitize(String(body.nickname ?? ''), 80),
+      // Firma del contenido por el remitente (vault, ECDSA P-256) → validable.
+      ts: Number(body.ts) || 0,
+      signature: String(body.signature ?? '').trim().slice(0, 1000),
     }
 
     try {
@@ -82,7 +85,7 @@ export default {
 async function sendEmail(env, text, meta) {
   if (!env.RESEND_API_KEY || !env.EMAIL_TO || !env.EMAIL_FROM) throw new Error('not_configured')
   const subject = `[Dotrino] App request${meta.nickname ? ' de ' + meta.nickname : ''}: ${oneLine(text, 50)}`
-  const sender = await senderBlock(meta)
+  const sender = await senderBlock(text, meta)
   const html =
     `<p style="white-space:pre-wrap">${escapeHtml(text)}</p>` +
     sender +
@@ -108,7 +111,7 @@ async function sendEmail(env, text, meta) {
 
 // Bloque del remitente en el email: nickname + link para ver/calificar su perfil
 // (profile.dotrino.com) + sus reviews actuales del registro de reputación.
-async function senderBlock(meta) {
+async function senderBlock(text, meta) {
   if (!meta.pubkey && !meta.nickname) return ''
   let html = '<hr><p style="font-size:14px"><strong>Remitente</strong>'
   if (meta.nickname) html += `<br>Nickname: ${escapeHtml(meta.nickname)}`
@@ -118,6 +121,14 @@ async function senderBlock(meta) {
   }
   html += '</p>'
   if (meta.pubkey) html += await fetchReviews(meta.pubkey)
+  // Link de validación: verifica la firma del contenido + muestra la reputación,
+  // todo en un paso (página dotrino_profile, modo #v=). Verificación client-side.
+  if (meta.signature && meta.pubkey) {
+    const payload = { op: 'app-request', text, ts: meta.ts, pubkey: meta.pubkey, nickname: meta.nickname, signature: meta.signature }
+    const link = `https://profile.dotrino.com/#v=${b64url(JSON.stringify(payload))}`
+    html += `<p style="font-size:13px"><a href="${link}"><strong>Validar firma + ver reputación →</strong></a>` +
+      '<br><span style="color:#999;font-size:12px">firma ECDSA P-256 del vault del remitente</span></p>'
+  }
   return html
 }
 
