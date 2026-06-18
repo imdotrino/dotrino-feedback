@@ -1,0 +1,23 @@
+name = "dotrino-feedback"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+# Config NO secreta (el secreto RESEND_API_KEY va con `wrangler secret put`).
+[vars]
+EMAIL_TO = "imdotrino@gmail.com"
+EMAIL_FROM = "Dotrino <requests@dotrino.com>"
+ALLOWED_ORIGINS = "https://dotrino.com,https://*.dotrino.com"
+
+# Dominio propio DESACTIVADO: el wildcard *.dotrino.com (→ VPS/nginx) intercepta
+# feedback.dotrino.com (devuelve 405), así que el custom domain del worker no
+# toma efecto. Se usa la URL workers.dev. Para reactivarlo habría que resolver el
+# conflicto del wildcard en Cloudflare y descomentar:
+# routes = [{ pattern = "feedback.dotrino.com", custom_domain = true }]
+
+# Anti-spam: máx 5 requests por 60 s por IP (binding nativo de Cloudflare).
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }

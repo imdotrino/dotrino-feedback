@@ -1,0 +1,15 @@
+{
+  "name": "@dotrino/feedback",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Relay Worker del ecosistema Dotrino: reenvía solicitudes/feedback (p. ej. 'Solicita o recomienda una app' del home) por email (Resend).",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.99.0"
+  }
+}
