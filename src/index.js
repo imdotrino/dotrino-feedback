@@ -62,6 +62,10 @@ export default {
       locale: body.locale === 'en' ? 'en' : 'es',
       contact: sanitize(String(body.contact ?? ''), 120),
       country: request.cf?.country || '',
+      // Identidad opcional del remitente (si tenía vault al enviar): para sumar
+      // nickname + link de calificación + reviews existentes al email.
+      pubkey: String(body.pubkey ?? '').trim().slice(0, 4000),
+      nickname: sanitize(String(body.nickname ?? ''), 80),
     }
 
     try {
@@ -77,9 +81,11 @@ export default {
 
 async function sendEmail(env, text, meta) {
   if (!env.RESEND_API_KEY || !env.EMAIL_TO || !env.EMAIL_FROM) throw new Error('not_configured')
-  const subject = `[Dotrino] App request: ${oneLine(text, 50)}`
+  const subject = `[Dotrino] App request${meta.nickname ? ' de ' + meta.nickname : ''}: ${oneLine(text, 50)}`
+  const sender = await senderBlock(meta)
   const html =
     `<p style="white-space:pre-wrap">${escapeHtml(text)}</p>` +
+    sender +
     `<hr><p style="color:#666;font-size:13px">app: ${escapeHtml(meta.app)} · ${meta.locale}` +
     `${meta.country ? ' · ' + escapeHtml(meta.country) : ''}` +
     `${meta.contact ? '<br>contacto: ' + escapeHtml(meta.contact) : ''}</p>`
@@ -96,6 +102,54 @@ async function sendEmail(env, text, meta) {
   })
   if (!res.ok) throw new Error(`email_${res.status}`)
   return { sent: true }
+}
+
+/* ───────────────────────── remitente + reviews ───────────────────────── */
+
+// Bloque del remitente en el email: nickname + link para ver/calificar su perfil
+// (profile.dotrino.com) + sus reviews actuales del registro de reputación.
+async function senderBlock(meta) {
+  if (!meta.pubkey && !meta.nickname) return ''
+  let html = '<hr><p style="font-size:14px"><strong>Remitente</strong>'
+  if (meta.nickname) html += `<br>Nickname: ${escapeHtml(meta.nickname)}`
+  if (meta.pubkey) {
+    const link = `https://profile.dotrino.com/#${b64url(meta.pubkey)}`
+    html += `<br><a href="${link}">Ver / calificar su perfil →</a>`
+  }
+  html += '</p>'
+  if (meta.pubkey) html += await fetchReviews(meta.pubkey)
+  return html
+}
+
+// Lee las atestaciones públicas sobre el sujeto (GET reputation.dotrino.com).
+async function fetchReviews(pubkey) {
+  try {
+    const res = await fetch(`https://reputation.dotrino.com/ratings?subject=${encodeURIComponent(pubkey)}`)
+    if (!res.ok) return ''
+    const data = await res.json()
+    const att = Array.isArray(data && data.attestations) ? data.attestations : []
+    if (!att.length) return '<p style="font-size:13px;color:#666">Sin reviews todavía.</p>'
+    const rows = att.slice(0, 10).map((a) => {
+      const conf = (a.indicators && a.indicators.confianza != null) ? a.indicators.confianza : a.rating
+      const af = a.indicators && a.indicators.afinidad
+      const parts = []
+      if (conf != null) parts.push(`confianza ${conf}/5`)
+      if (af != null) parts.push(`afinidad ${af}/5`)
+      const notes = a.notes ? ` — "${escapeHtml(String(a.notes).slice(0, 160))}"` : ''
+      return `<li>${parts.join(', ') || 'sin puntaje'}${notes}</li>`
+    }).join('')
+    return `<p style="font-size:14px"><strong>Reviews (${att.length})</strong></p><ul style="font-size:13px;color:#444">${rows}</ul>`
+  } catch {
+    return ''
+  }
+}
+
+// base64url UTF-8-safe (inverso del decode de la página dotrino_profile).
+function b64url(s) {
+  const bytes = new TextEncoder().encode(s)
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
 /* ───────────────────────── helpers ───────────────────────── */
