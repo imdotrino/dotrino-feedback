@@ -71,6 +71,12 @@ export default {
       signature: String(body.signature ?? '').trim().slice(0, 1000),
     }
 
+    // Verificación server-side de la firma (anti-suplantación): el email se
+    // auto-certifica ✓/✗ sin tener que abrir el link de validación.
+    meta.verified = (meta.pubkey && meta.signature)
+      ? await verifyContentSig(meta.pubkey, text, meta.ts, meta.signature)
+      : null
+
     try {
       await sendEmail(env, text, meta)
     } catch (e) {
@@ -115,6 +121,11 @@ async function senderBlock(text, meta) {
   if (!meta.pubkey && !meta.nickname) return ''
   let html = '<hr><p style="font-size:14px"><strong>Remitente</strong>'
   if (meta.nickname) html += `<br>Nickname: ${escapeHtml(meta.nickname)}`
+  if (meta.signature) {
+    html += meta.verified
+      ? '<br><span style="color:#1a7a3a;font-weight:600">✓ Identidad verificada (firma válida)</span>'
+      : '<br><span style="color:#b3261e;font-weight:600">✗ Firma NO verificada — posible suplantación</span>'
+  }
   if (meta.pubkey) {
     const link = `https://profile.dotrino.com/#${b64url(meta.pubkey)}`
     html += `<br><a href="${link}">Ver / calificar su perfil →</a>`
@@ -161,6 +172,26 @@ function b64url(s) {
   let bin = ''
   for (const b of bytes) bin += String.fromCharCode(b)
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+// canonicalStringify (claves ordenadas) — idéntico a @dotrino/reputation y al vault.
+function canonicalStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return '[' + value.map(canonicalStringify).join(',') + ']'
+  return '{' + Object.keys(value).sort().map((k) => JSON.stringify(k) + ':' + canonicalStringify(value[k])).join(',') + '}'
+}
+
+// Verifica la firma del contenido (ECDSA P-256 + SHA-256 sobre el canonical de
+// {op:'app-request', text, ts}). La firma del vault es base64 estándar de r||s.
+async function verifyContentSig(pubkeyStr, text, ts, sigB64) {
+  try {
+    const key = await crypto.subtle.importKey('jwk', JSON.parse(pubkeyStr), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+    const bytes = new TextEncoder().encode(canonicalStringify({ op: 'app-request', text, ts }))
+    const sig = Uint8Array.from(atob(sigB64), (c) => c.charCodeAt(0))
+    return await crypto.subtle.verify({ name: 'ECDSA', hash: { name: 'SHA-256' } }, key, sig, bytes)
+  } catch {
+    return false
+  }
 }
 
 /* ───────────────────────── helpers ───────────────────────── */
