@@ -126,19 +126,20 @@ async function senderBlock(text, meta) {
       ? '<br><span style="color:#1a7a3a;font-weight:600">✓ Identidad verificada (firma válida)</span>'
       : '<br><span style="color:#b3261e;font-weight:600">✗ Firma NO verificada — posible suplantación</span>'
   }
-  if (meta.pubkey) {
-    const link = `https://profile.dotrino.com/#${b64url(meta.pubkey)}`
-    html += `<br><a href="${link}">Ver / calificar su perfil →</a>`
-  }
   html += '</p>'
   if (meta.pubkey) html += await fetchReviews(meta.pubkey)
-  // Link de validación: verifica la firma del contenido + muestra la reputación,
-  // todo en un paso (página dotrino_profile, modo #v=). Verificación client-side.
-  if (meta.signature && meta.pubkey) {
-    const payload = { op: 'app-request', text, ts: meta.ts, pubkey: meta.pubkey, nickname: meta.nickname, signature: meta.signature }
-    const link = `https://profile.dotrino.com/#v=${b64url(JSON.stringify(payload))}`
-    html += `<p style="font-size:13px"><a href="${link}"><strong>Validar firma + ver reputación →</strong></a>` +
-      '<br><span style="color:#999;font-size:12px">firma ECDSA P-256 del vault del remitente</span></p>'
+  // UN solo link: el modo #v= valida la firma + muestra el perfil/reputación (con
+  // el nickname) + permite calificar, todo en un paso. Sin firma, cae al perfil
+  // simple (#p= con nombre). Verificación client-side.
+  if (meta.pubkey) {
+    let link
+    if (meta.signature) {
+      const payload = { op: 'app-request', text, ts: meta.ts, pubkey: meta.pubkey, nickname: meta.nickname, signature: meta.signature }
+      link = `https://profile.dotrino.com/#v=${b64url(JSON.stringify(payload))}`
+    } else {
+      link = `https://profile.dotrino.com/#p=${b64url(meta.pubkey)}` + (meta.nickname ? `&name=${b64url(meta.nickname)}` : '')
+    }
+    html += `<p style="font-size:13px"><a href="${link}"><strong>Ver perfil, validar firma y calificar →</strong></a></p>`
   }
   return html
 }
