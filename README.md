@@ -1,5 +1,7 @@
 # @dotrino/feedback
 
+> **Parte del ecosistema [Dotrino](https://dotrino.com).** Misión: aplicaciones que resuelven problemas comunes, respetando tu privacidad — sin anuncios, sin cookies, sin rastreo de datos, sin vender tu identidad a nadie.
+
 Relay del ecosistema Dotrino en **Cloudflare Workers**. Recibe envíos de
 formularios públicos (p. ej. el input *"Solicita o recomienda una aplicación"*
 del home) y los reenvía por **email** a `imdotrino@gmail.com` (vía Resend).
