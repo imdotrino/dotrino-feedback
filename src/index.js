@@ -25,6 +25,8 @@
  *   RESEND_API_KEY    (wrangler secret put RESEND_API_KEY)
  */
 
+import { myIndicators, pubkeyId } from '@dotrino/reputation'
+
 const MAX_TEXT = 2000
 
 export default {
@@ -144,24 +146,36 @@ async function senderBlock(text, meta) {
   return html
 }
 
-// Lee las atestaciones públicas sobre el sujeto (GET reputation.dotrino.com).
+// Lee las atestaciones públicas sobre el sujeto (GET rep.dotrino.com, el backend
+// del registro: `reputation.dotrino.com` es el frontend desde el rename y da 404).
 async function fetchReviews(pubkey) {
   try {
-    const res = await fetch(`https://reputation.dotrino.com/ratings?subject=${encodeURIComponent(pubkey)}`)
+    const res = await fetch(`https://rep.dotrino.com/ratings?subject=${encodeURIComponent(pubkey)}`)
     if (!res.ok) return ''
     const data = await res.json()
     const att = Array.isArray(data && data.attestations) ? data.attestations : []
     if (!att.length) return '<p style="font-size:13px;color:#666">Sin reviews todavía.</p>'
-    const rows = att.slice(0, 10).map((a) => {
-      const conf = (a.indicators && a.indicators.confianza != null) ? a.indicators.confianza : a.rating
-      const af = a.indicators && a.indicators.afinidad
+    // El registro guarda UNA atestación por eje, así que hay que agrupar por
+    // emisor: si no, quien califica 3 ejes sale como 3 filas y el conteo miente.
+    const byIssuer = new Map()
+    for (const a of att) {
+      if (!a || typeof a.issuer !== 'string') continue
+      const id = pubkeyId(a.issuer)
+      const r = byIssuer.get(id) || { issuer: a.issuer, notes: '' }
+      if (a.notes && !r.notes) r.notes = String(a.notes)
+      byIssuer.set(id, r)
+    }
+    const reviewers = [...byIssuer.values()]
+    const rows = reviewers.slice(0, 10).map((r) => {
+      const ind = myIndicators(att, r.issuer)   // fusiona los ejes de ESE emisor
       const parts = []
-      if (conf != null) parts.push(`confianza ${conf}/5`)
-      if (af != null) parts.push(`afinidad ${af}/5`)
-      const notes = a.notes ? ` — "${escapeHtml(String(a.notes).slice(0, 160))}"` : ''
+      for (const [key, label] of [['confianza', 'confianza'], ['afinidad', 'afinidad'], ['conoce', 'conocimiento']]) {
+        if (typeof ind[key] === 'number') parts.push(`${label} ${ind[key]}/5`)
+      }
+      const notes = r.notes ? ` — "${escapeHtml(r.notes.slice(0, 160))}"` : ''
       return `<li>${parts.join(', ') || 'sin puntaje'}${notes}</li>`
     }).join('')
-    return `<p style="font-size:14px"><strong>Reviews (${att.length})</strong></p><ul style="font-size:13px;color:#444">${rows}</ul>`
+    return `<p style="font-size:14px"><strong>Reviews (${reviewers.length})</strong></p><ul style="font-size:13px;color:#444">${rows}</ul>`
   } catch {
     return ''
   }
