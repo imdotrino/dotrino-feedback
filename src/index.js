@@ -181,7 +181,7 @@ async function fetchReviews(pubkey) {
   }
 }
 
-// base64url UTF-8-safe (inverso del decode de la página dotrino_profile).
+// base64url UTF-8-safe (inverso del decode de la página dotrino-profile-app).
 function b64url(s) {
   const bytes = new TextEncoder().encode(s)
   let bin = ''
