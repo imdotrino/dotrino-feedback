@@ -1,3 +1,5 @@
+import { verifyDeviceSig } from '@dotrino/identity/capabilities'
+
 /**
  * @dotrino/feedback — Cloudflare Worker relay (solo email)
  *
@@ -189,21 +191,23 @@ function b64url(s) {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
-// canonicalStringify (claves ordenadas) — idéntico a @dotrino/reputation y al vault.
-function canonicalStringify(value) {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return '[' + value.map(canonicalStringify).join(',') + ']'
-  return '{' + Object.keys(value).sort().map((k) => JSON.stringify(k) + ':' + canonicalStringify(value[k])).join(',') + '}'
-}
-
-// Verifica la firma del contenido (ECDSA P-256 + SHA-256 sobre el canonical de
-// {op:'app-request', text, ts}). La firma del vault es base64 estándar de r||s.
+/**
+ * Verifica la firma del contenido (ECDSA P-256 + SHA-256 sobre el canónico de
+ * `{op:'app-request', text, ts}`, firma base64 de r||s — el formato del vault).
+ *
+ * La comprobación es del pilar (`verifyDeviceSig` de `@dotrino/identity`), no
+ * nuestra: antes esto era una copia a mano de `canonicalStringify` más un
+ * `crypto.subtle.verify` suelto, y dos implementaciones de la misma firma se
+ * separan en cuanto una de las dos cambia. El subpath `/capabilities` solo
+ * arrastra `core.js` y `keyid.js`, así que el Worker no crece.
+ */
 async function verifyContentSig(pubkeyStr, text, ts, sigB64) {
   try {
-    const key = await crypto.subtle.importKey('jwk', JSON.parse(pubkeyStr), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
-    const bytes = new TextEncoder().encode(canonicalStringify({ op: 'app-request', text, ts }))
-    const sig = Uint8Array.from(atob(sigB64), (c) => c.charCodeAt(0))
-    return await crypto.subtle.verify({ name: 'ECDSA', hash: { name: 'SHA-256' } }, key, sig, bytes)
+    return await verifyDeviceSig({
+      publickey: pubkeyStr,
+      data: { op: 'app-request', text, ts },
+      signature: sigB64,
+    })
   } catch {
     return false
   }
