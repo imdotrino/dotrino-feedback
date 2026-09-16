@@ -24,6 +24,30 @@ POST /  (Content-Type: application/json)
 
 `text` 1..2000 chars (requerido). Solo acepta `Origin` de `ALLOWED_ORIGINS`.
 
+### Con un archivo adjunto
+
+Para pedir algo mandando un archivo de muestra (lo usa Facturero para «¿Necesitas otro
+importador?»):
+
+```
+POST /  Content-Type: application/octet-stream
+        X-Dotrino-Feedback: base64url(JSON { text, app, locale, contact, pubkey, nickname, ts, signature, filename })
+        cuerpo: los bytes del archivo
+→ 200 { "ok": true } · 413 attachment_too_large · 400 bad_filename | bad_meta | attachment_length_mismatch
+```
+
+- **Tope: 5 MB**. Resend admite 40 MB por correo, ya en base64, y Cloudflare 100 MB de
+  cuerpo.
+- **Extensiones admitidas:** `xls xlsx xlsm ods csv txt xml json pdf zip`.
+- **Por qué el archivo no va dentro de un JSON:** en el plan gratuito un Worker tiene
+  **10 ms de CPU** por petición, y leer y volver a escribir un JSON con 1 MB de base64 ya
+  gasta unos 7 ms (medido).
+- **Cómo se lee:** el cuerpo entra por tramos, pasa a base64 con el `Buffer` nativo
+  (`nodejs_compat`, unos 0,3 ms por MB) y se pega al JSON de Resend sin interpretarlo.
+- **Los helpers** viven en `src/attachment.js` y no en `src/index.js`: el módulo de entrada
+  de un Worker solo puede exportar manejadores, y workerd no arranca si exporta otra cosa.
+- **Pruebas:** `npm test` (contra un Resend falso).
+
 ## Deploy (lo corre el dueño de la cuenta Cloudflare)
 
 ```bash

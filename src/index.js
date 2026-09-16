@@ -28,8 +28,11 @@ import { verifyDeviceSig } from '@dotrino/identity/capabilities'
  */
 
 import { myIndicators, pubkeyId } from '@dotrino/reputation'
+import { MAX_ATTACHMENT_BYTES, readMetaHeader, sanitizeFilename, readBase64 } from './attachment.js'
 
 const MAX_TEXT = 2000
+
+
 
 export default {
   async fetch(request, env) {
@@ -54,8 +57,20 @@ export default {
       if (!success) return json({ ok: false, error: 'rate_limited' }, 429, cors)
     }
 
+    const withFile = (request.headers.get('Content-Type') || '').startsWith('application/octet-stream')
     let body
-    try { body = await request.json() } catch { return json({ ok: false, error: 'bad_json' }, 400, cors) }
+    let attachment = null
+    if (withFile) {
+      try { body = readMetaHeader(request.headers.get('X-Dotrino-Feedback')) } catch { return json({ ok: false, error: 'bad_meta' }, 400, cors) }
+      const filename = sanitizeFilename(String(body.filename ?? ''))
+      if (!filename) return json({ ok: false, error: 'bad_filename' }, 400, cors)
+      const size = Number(request.headers.get('Content-Length'))
+      if (!Number.isInteger(size) || size <= 0) return json({ ok: false, error: 'length_required' }, 411, cors)
+      if (size > MAX_ATTACHMENT_BYTES) return json({ ok: false, error: 'attachment_too_large', max: MAX_ATTACHMENT_BYTES }, 413, cors)
+      attachment = { filename, size }
+    } else {
+      try { body = await request.json() } catch { return json({ ok: false, error: 'bad_json' }, 400, cors) }
+    }
 
     const text = String(body.text ?? '').trim()
     if (!text) return json({ ok: false, error: 'empty_text' }, 400, cors)
@@ -81,8 +96,18 @@ export default {
       ? await verifyContentSig(meta.pubkey, text, meta.ts, meta.signature)
       : null
 
+    if (attachment) {
+      try {
+        attachment.base64 = await readBase64(request.body, attachment.size)
+      } catch (e) {
+        if (e.code === 'attachment_too_large') return json({ ok: false, error: e.code, max: MAX_ATTACHMENT_BYTES }, 413, cors)
+        if (e.code === 'attachment_length_mismatch') return json({ ok: false, error: e.code }, 400, cors)
+        throw e
+      }
+    }
+
     try {
-      await sendEmail(env, text, meta)
+      await sendEmail(env, text, meta, attachment)
     } catch (e) {
       return json({ ok: false, error: String(e?.message || e) }, 502, cors)
     }
@@ -92,9 +117,10 @@ export default {
 
 /* ───────────────────────── email (Resend) ───────────────────────── */
 
-async function sendEmail(env, text, meta) {
+async function sendEmail(env, text, meta, attachment = null) {
   if (!env.RESEND_API_KEY || !env.EMAIL_TO || !env.EMAIL_FROM) throw new Error('not_configured')
-  const subject = `[Dotrino] App request${meta.nickname ? ' de ' + meta.nickname : ''}: ${oneLine(text, 50)}`
+  const subject = `[Dotrino] App request${meta.nickname ? ' de ' + meta.nickname : ''}: ${oneLine(text, 50)}` +
+    (attachment ? ` (adjunto: ${attachment.filename})` : '')
   const sender = await senderBlock(text, meta)
   const html =
     `<p style="white-space:pre-wrap">${escapeHtml(text)}</p>` +
@@ -102,16 +128,22 @@ async function sendEmail(env, text, meta) {
     `<hr><p style="color:#666;font-size:13px">app: ${escapeHtml(meta.app)} · ${meta.locale}` +
     `${meta.country ? ' · ' + escapeHtml(meta.country) : ''}` +
     `${meta.contact ? '<br>contacto: ' + escapeHtml(meta.contact) : ''}</p>`
+  const base = JSON.stringify({
+    from: env.EMAIL_FROM,
+    to: [env.EMAIL_TO],
+    ...(meta.contact && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(meta.contact) ? { reply_to: meta.contact } : {}),
+    subject,
+    html,
+  })
+  // El base64 del adjunto se pega tal cual: solo trae [A-Za-z0-9+/=], que no hay que escapar
+  // en JSON, y así no se serializa otra vez un texto de megas.
+  const body = attachment
+    ? base.slice(0, -1) + `,"attachments":[{"filename":${JSON.stringify(attachment.filename)},"content":"` + attachment.base64 + '"}]}'
+    : base
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: env.EMAIL_FROM,
-      to: [env.EMAIL_TO],
-      ...(meta.contact && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(meta.contact) ? { reply_to: meta.contact } : {}),
-      subject,
-      html,
-    }),
+    body,
   })
   if (!res.ok) throw new Error(`email_${res.status}`)
   return { sent: true }
@@ -220,7 +252,7 @@ function corsHeaders(origin, env) {
   return {
     'Access-Control-Allow-Origin': allow,
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Dotrino-Feedback',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   }
