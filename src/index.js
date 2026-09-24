@@ -31,6 +31,9 @@ import { myIndicators, pubkeyId } from '@dotrino/reputation'
 import { MAX_ATTACHMENT_BYTES, readMetaHeader, sanitizeFilename, readBase64 } from './attachment.js'
 
 const MAX_TEXT = 2000
+// Lo que puede tener de viejo una solicitud firmada. La firma cubre `ts`, así que esto es lo
+// que impide reenviar hoy una solicitud firmada de otro día.
+export const MAX_SKEW_MS = 10 * 60 * 1000
 
 
 
@@ -90,11 +93,13 @@ export default {
       signature: String(body.signature ?? '').trim().slice(0, 1000),
     }
 
-    // Verificación server-side de la firma (anti-suplantación): el email se
-    // auto-certifica ✓/✗ sin tener que abrir el link de validación.
-    meta.verified = (meta.pubkey && meta.signature)
-      ? await verifyContentSig(meta.pubkey, text, meta.ts, meta.signature)
-      : null
+    // LA FIRMA ES OBLIGATORIA (dueño, 2026-09-24: «el app request debe enviar la firma de
+    // Dotrino»). Antes era opcional y llegaban correos sin firma que nadie podía atribuir.
+    // Se comprueba ANTES de leer un adjunto: a quien no firma no se le leen 5 MB.
+    if (!meta.pubkey || !meta.signature) return json({ ok: false, error: 'unsigned_request' }, 401, cors)
+    if (!meta.ts || Math.abs(Date.now() - meta.ts) > MAX_SKEW_MS) return json({ ok: false, error: 'stale_request' }, 401, cors)
+    meta.verified = await verifyContentSig(meta.pubkey, text, meta.ts, meta.signature)
+    if (!meta.verified) return json({ ok: false, error: 'bad_signature' }, 401, cors)
 
     if (attachment) {
       try {
@@ -154,29 +159,16 @@ async function sendEmail(env, text, meta, attachment = null) {
 // Bloque del remitente en el email: nickname + link para ver/calificar su perfil
 // (profile.dotrino.com) + sus reviews actuales del registro de reputación.
 async function senderBlock(text, meta) {
-  if (!meta.pubkey && !meta.nickname) return ''
+  // Aquí solo llega lo que ya se verificó (ver el `fetch`): siempre hay remitente y firma.
   let html = '<hr><p style="font-size:14px"><strong>Remitente</strong>'
   if (meta.nickname) html += `<br>Nickname: ${escapeHtml(meta.nickname)}`
-  if (meta.signature) {
-    html += meta.verified
-      ? '<br><span style="color:#1a7a3a;font-weight:600">✓ Identidad verificada (firma válida)</span>'
-      : '<br><span style="color:#b3261e;font-weight:600">✗ Firma NO verificada — posible suplantación</span>'
-  }
+  html += '<br><span style="color:#1a7a3a;font-weight:600">✓ Firmada con la identidad de Dotrino (firma válida)</span>'
   html += '</p>'
-  if (meta.pubkey) html += await fetchReviews(meta.pubkey)
-  // UN solo link: el modo #v= valida la firma + muestra el perfil/reputación (con
-  // el nickname) + permite calificar, todo en un paso. Sin firma, cae al perfil
-  // simple (#p= con nombre). Verificación client-side.
-  if (meta.pubkey) {
-    let link
-    if (meta.signature) {
-      const payload = { op: 'app-request', text, ts: meta.ts, pubkey: meta.pubkey, nickname: meta.nickname, signature: meta.signature }
-      link = `https://profile.dotrino.com/#v=${b64url(JSON.stringify(payload))}`
-    } else {
-      link = `https://profile.dotrino.com/#p=${b64url(meta.pubkey)}` + (meta.nickname ? `&name=${b64url(meta.nickname)}` : '')
-    }
-    html += `<p style="font-size:13px"><a href="${link}"><strong>Ver perfil, validar firma y calificar →</strong></a></p>`
-  }
+  html += await fetchReviews(meta.pubkey)
+  // UN solo link: el modo #v= valida la firma + muestra el perfil/reputación (con el
+  // nickname) + permite calificar, todo en un paso. Verificación client-side.
+  const payload = { op: 'app-request', text, ts: meta.ts, pubkey: meta.pubkey, nickname: meta.nickname, signature: meta.signature }
+  html += `<p style="font-size:13px"><a href="https://profile.dotrino.com/#v=${b64url(JSON.stringify(payload))}"><strong>Ver perfil, validar firma y calificar →</strong></a></p>`
   return html
 }
 
