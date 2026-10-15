@@ -91,6 +91,10 @@ export default {
       // Firma del contenido por el remitente (vault, ECDSA P-256) → validable.
       ts: Number(body.ts) || 0,
       signature: String(body.signature ?? '').trim().slice(0, 1000),
+      // Su tarjeta de perfil (sus aparatos y sus llaves de cifrado), para que Dotrino le
+      // conteste por el messenger. Va tal cual en el enlace de respuesta: la verifica el
+      // messenger (la firma su perfil), no este Worker.
+      card: cardOf(body.card),
     }
 
     // LA FIRMA ES OBLIGATORIA (dueño, 2026-09-24: «el app request debe enviar la firma de
@@ -216,7 +220,17 @@ async function fetchReviews(pubkey) {
 export function replyLink(meta) {
   let url = `https://messenger.dotrino.com/#to=${b64url(meta.pubkey)}`
   if (meta.nickname) url += `&nick=${encodeURIComponent(String(meta.nickname).slice(0, 40))}`
+  if (meta.card) url += `&card=${b64url(meta.card)}`
   return url
+}
+
+const MAX_CARD = 6000
+
+/** La tarjeta de perfil como texto, si tiene forma de tarjeta y cabe en un enlace. */
+export function cardOf(card) {
+  if (!card || typeof card !== 'object' || typeof card.profileId !== 'string' || !Array.isArray(card.keys)) return null
+  const s = JSON.stringify(card)
+  return s.length <= MAX_CARD ? s : null
 }
 
 // base64url UTF-8-safe (inverso del decode de la página dotrino-profile-app).
