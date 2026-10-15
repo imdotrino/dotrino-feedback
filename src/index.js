@@ -169,6 +169,7 @@ async function senderBlock(text, meta) {
   // nickname) + permite calificar, todo en un paso. Verificación client-side.
   const payload = { op: 'app-request', text, ts: meta.ts, pubkey: meta.pubkey, nickname: meta.nickname, signature: meta.signature }
   html += `<p style="font-size:13px"><a href="https://profile.dotrino.com/#v=${b64url(JSON.stringify(payload))}"><strong>Ver perfil, validar firma y calificar →</strong></a></p>`
+  html += `<p style="font-size:13px"><a href="${replyLink(meta)}"><strong>Responder por messenger →</strong></a></p>`
   return html
 }
 
@@ -205,6 +206,17 @@ async function fetchReviews(pubkey) {
   } catch {
     return ''
   }
+}
+
+/**
+ * Abre messenger.dotrino.com con una solicitud de contacto a quien escribió, a su llave
+ * (la que firmó). Se abre con la cuenta de Dotrino: el messenger de esa persona la acepta
+ * solo, porque Dotrino es su contacto fijo. Llave y apodo van en el #fragment.
+ */
+export function replyLink(meta) {
+  let url = `https://messenger.dotrino.com/#to=${b64url(meta.pubkey)}`
+  if (meta.nickname) url += `&nick=${encodeURIComponent(String(meta.nickname).slice(0, 40))}`
+  return url
 }
 
 // base64url UTF-8-safe (inverso del decode de la página dotrino-profile-app).
